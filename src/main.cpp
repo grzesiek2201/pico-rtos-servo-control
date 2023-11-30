@@ -71,7 +71,7 @@ void receiveTask(void *param)
             int nservo = std::stoi(msg.substr(last, next-last));
 
             std::string enc{};
-            enc += std::to_string(nservo) + " ";
+            enc += std::to_string(nservo % myServo.size()) + " ";
             enc += (std::to_string(myServo.at(nservo % myServo.size()).getPosition()*3.14/180));
             std::cout << enc << " \r\n";
         }
