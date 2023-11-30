@@ -17,7 +17,7 @@
 std::string msg{};
 
 TaskHandle_t gLEDtask = NULL;
-TaskHandle_t gListentask = NULL;
+TaskHandle_t gReceivetask = NULL;
 TaskHandle_t gPrinttask = NULL;
 TaskHandle_t gMoveServotask = NULL;
 TaskHandle_t gFeedbackServotask = NULL;
@@ -29,30 +29,34 @@ void init_servo(PCA9685_servo& servo, uint8_t mode, int16_t minRange,
 
 PCA9685_servo_driver myController(i2c0, 0, 1, 0x40);
 std::vector<PCA9685_servo> myServo = {PCA9685_servo(&myController, 0, 100, 540),
-                                      PCA9685_servo(&myController, 1, 100, 540)}; // define a vector of servos, note this could extend to use multiple controller on the i2c bus
+                                      PCA9685_servo(&myController, 1, 100, 540),
+                                      PCA9685_servo(&myController, 2, 100, 540)}; // define a vector of servos, note this could extend to use multiple controller on the i2c bus
 uint64_t TNow = 0;
 uint64_t TPrevious = 0;
 uint64_t TEllapsed = 0;
 
 
-void GreenLEDTask(void *param)
+const int RECEIVE_DELAY = 3;
+
+
+void HeartbeatLEDTask(void *param)
 {
     while(1)
     {
         // Blink LED
-        // printf("Blinking!\r\n");
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-        vTaskDelay(pdMS_TO_TICKS(300));
+        vTaskDelay(pdMS_TO_TICKS(1000));
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-        vTaskDelay(pdMS_TO_TICKS(300));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
-void listenTask(void *param)
+void receiveTask(void *param)
 {
+    int *tick_delay = (int*)param;
     while(1)
     {
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(*tick_delay));
         std::getline(std::cin, msg);
         xTaskNotifyGive(gPrinttask);
         
@@ -68,42 +72,18 @@ void listenTask(void *param)
 
             std::string enc{};
             enc += std::to_string(nservo) + " ";
-            enc += (std::to_string(myServo.at(nservo%2).getPosition()*3.14/180));
+            enc += (std::to_string(myServo.at(nservo % myServo.size()).getPosition()*3.14/180));
             std::cout << enc << " \r\n";
         }
         else if(mode == "p") // for 'position'
-        {
-            try
-            {
-                int nservo = std::stoi(msg.substr(last, next-last));
-                last = next + 1;
-                next = msg.find(" ", last);
-                double angle_rad = std::stod(msg.substr(last, next-last));
-                int angle_deg = angle_rad * 180 / 3.14;
+        {   
+            int nservo = std::stoi(msg.substr(last, next-last));
+            last = next + 1;
+            next = msg.find(" ", last);
+            double angle_rad = std::stod(msg.substr(last, next-last));
+            int angle_deg = angle_rad * 180 / 3.14;
 
-                myServo.at(nservo).setPosition(angle_deg);
-            }
-            catch(std::invalid_argument const& ex)
-            {
-                std::cout << "std::invalid_argument::what(): " << ex.what() << "\n";
-            }
-            catch(std::out_of_range const& ex)
-            {
-                std::cout << "std::out_of_range::what(): " << ex.what() << "\n";
-            }
-        }
-    }
-}
-
-void printTask(void *param)
-{
-    int notify_value{0};
-    while(1)
-    {
-        notify_value = ulTaskNotifyTake(pdTRUE, (TickType_t) portMAX_DELAY);
-        if(notify_value > 0)
-        {
-            std::cout << msg << "\n";
+            myServo.at(nservo).setPosition(angle_deg);
         }
     }
 }
@@ -132,7 +112,6 @@ void servoFeedbackTask(void *param)
         i = 0;
         for(auto& servo : myServo)
         {
-            // std::cout << "Servo " << i++ << " position: " << (uint8_t)(servo.getPosition()) << "\n";
             printf("%d %d \r\n", i++, servo.getPosition());
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -149,59 +128,44 @@ int main()
         return -1;
     }
     
+    // Initialize controller and servos
     myController.begin(100000);
     int i{0};
     for(auto& servo : myServo){
-        init_servo(servo, MODE_SCONSTANT, -90, 90, servo.getMinAngle(), i++, 1000000);
-        servo.setAngularVelocity(145);
+        init_servo(servo, MODE_FAST, -90, 90, servo.getMidAngle(), i++, 1000000);
+        servo.setAngularVelocity(60);
     }
     sleep_ms(1000);
 
-
+    // Heartbeat LED task, idle priority
     uint32_t status = xTaskCreate(
-        GreenLEDTask,
-        "Green LED",
-        1024,
-        NULL,
+        HeartbeatLEDTask,
+        "Heartbeat LED",
+        128,
+        nullptr,
         tskIDLE_PRIORITY+1,
         &gLEDtask
     );
 
+    // Receive task, idle priority
     xTaskCreate(
-        listenTask,
-        "listen",
+        receiveTask,
+        "receive",
         1024,
-        NULL,
-        tskIDLE_PRIORITY,
-        &gListentask
+        (void*)&RECEIVE_DELAY,
+        tskIDLE_PRIORITY+1,
+        &gReceivetask
     );
 
-    // xTaskCreate(
-    //     printTask,
-    //     "print input",
-    //     1024,
-    //     NULL,
-    //     tskIDLE_PRIORITY,
-    //     &gPrinttask
-    // );
-
+    // Servo loop task, the highest priority
     xTaskCreate(
         servoLoopTask,
         "servo loop",
         1024,
-        NULL,
+        nullptr,
         tskIDLE_PRIORITY+2,
         &gMoveServotask
     );
-
-    // xTaskCreate(
-    //     servoFeedbackTask,
-    //     "servo feedback",
-    //     1024,
-    //     nullptr,
-    //     tskIDLE_PRIORITY,
-    //     &gFeedbackServotask
-    // );
 
     vTaskStartScheduler();
 
