@@ -31,6 +31,7 @@ PCA9685_servo_driver myController(i2c0, 0, 1, 0x40);
 std::vector<PCA9685_servo> myServo = {PCA9685_servo(&myController, 0, 100, 540),
                                       PCA9685_servo(&myController, 1, 100, 540),
                                       PCA9685_servo(&myController, 2, 100, 540)}; // define a vector of servos, note this could extend to use multiple controller on the i2c bus
+
 uint64_t TNow = 0;
 uint64_t TPrevious = 0;
 uint64_t TEllapsed = 0;
@@ -75,7 +76,7 @@ void receiveTask(void *param)
             enc += (std::to_string(myServo.at(nservo % myServo.size()).getPosition()*3.14/180));
             std::cout << enc << " \r\n";
         }
-        else if(mode == "p") // for 'position'
+        else if(mode == "m") // for 'move'  
         {   
             int nservo = std::stoi(msg.substr(last, next-last));
             last = next + 1;
@@ -132,8 +133,8 @@ int main()
     myController.begin(100000);
     int i{0};
     for(auto& servo : myServo){
-        init_servo(servo, MODE_FAST, -90, 90, servo.getMidAngle(), i++, 1000000);
-        servo.setAngularVelocity(60);
+        init_servo(servo, MODE_SCONSTANT, -90, 90, servo.getMidAngle(), i++, 1000000);
+        servo.setAngularVelocity(360);
     }
     sleep_ms(1000);
 
